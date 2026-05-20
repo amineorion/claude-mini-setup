@@ -64,7 +64,7 @@ client/cmini         session picker, installed to /usr/local/bin/cmini
 Clone the repo and edit `config.sh` — every script reads it:
 
 ```bash
-git clone https://github.com/OWNER/claude-mini-setup.git
+git clone https://github.com/amineorion/claude-mini-setup.git
 cd claude-mini-setup
 ```
 

@@ -1,0 +1,93 @@
+#!/bin/bash
+# cmini — launch / pick a Claude session on the server over Tailscale SSH.
+#
+# session names map to ~/workspaces/<name>/ on the server, where claude runs.
+# Re-attaching to a session keeps its existing state and scrollback.
+#
+# usage:
+#   cmini             show picker (running sessions + available workspaces)
+#   cmini <name>      attach to (or create) session <name>
+#   cmini -l          list running sessions
+#   cmini -p          list available workspaces
+#   cmini -k <name>   kill session <name>
+#
+# Requires CLAUDE_MINI_HOST = your server's Tailscale name.
+# client/install.sh adds that to ~/.zshrc for you.
+
+set -e
+
+case "$1" in
+  -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+esac
+
+REMOTE="${CLAUDE_MINI_HOST:-}"
+if [ -z "$REMOTE" ]; then
+  echo "CLAUDE_MINI_HOST is not set." >&2
+  echo "  export CLAUDE_MINI_HOST=your-server      (or re-run client/install.sh)" >&2
+  exit 1
+fi
+CT='$HOME/.local/bin/ct'   # single-quoted: $HOME expands on the SERVER, not here
+
+case "$1" in
+  -l|--list)
+    exec ssh "$REMOTE" "$CT -l 2>/dev/null || echo '(no sessions)'" ;;
+  -p|--projects)
+    exec ssh "$REMOTE" "$CT -p" ;;
+  -k|--kill)
+    [ -n "$2" ] || { echo "usage: cmini -k <name>"; exit 1; }
+    exec ssh "$REMOTE" "$CT -k '$2'" ;;
+esac
+
+if [ -n "$1" ]; then
+  exec ssh "$REMOTE" -t "$CT '$1'"
+fi
+
+# no args → picker. fetch running sessions + workspace dirs in one round-trip.
+data=$(ssh "$REMOTE" "echo '---sessions---'; $CT -q; echo '---projects---'; $CT -p 2>/dev/null")
+
+sessions=$(echo "$data" | awk '/^---sessions---$/{flag=1;next}/^---projects---$/{flag=0}flag')
+projects=$(echo "$data" | awk '/^---projects---$/{flag=1;next}flag')
+
+echo "RUNNING sessions (resume scrollback + state):"
+i=1; arr=()
+if [ -n "$sessions" ]; then
+  while IFS= read -r s; do
+    [ -z "$s" ] && continue
+    printf "  %d) %s\n" "$i" "$s"
+    arr+=("$s")
+    i=$((i+1))
+  done <<< "$sessions"
+else
+  echo "  (none)"
+fi
+
+echo
+echo "AVAILABLE workspaces (start fresh claude in dir):"
+if [ -n "$projects" ]; then
+  while IFS= read -r p; do
+    [ -z "$p" ] && continue
+    if echo "$sessions" | grep -qx "$p"; then continue; fi
+    printf "  %d) %s\n" "$i" "$p"
+    arr+=("$p")
+    i=$((i+1))
+  done <<< "$projects"
+fi
+
+printf "\n  n) new (custom name)\n  q) quit\n\n"
+read -rp "pick: " choice
+
+case "$choice" in
+  q|"") exit 0 ;;
+  n)
+    read -rp "name: " name
+    [ -n "$name" ] || { echo "no name given"; exit 1; }
+    exec ssh "$REMOTE" -t "$CT '$name'"
+    ;;
+  *)
+    if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#arr[@]}" ]; then
+      exec ssh "$REMOTE" -t "$CT '${arr[$((choice-1))]}'"
+    else
+      echo "invalid choice"; exit 1
+    fi
+    ;;
+esac

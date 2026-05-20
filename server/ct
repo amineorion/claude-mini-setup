@@ -1,0 +1,33 @@
+#!/bin/sh
+# ct [name]     attach to (or create) tmux session 'name' (default: claude)
+#               if ~/workspaces/<name> exists, claude starts in that dir
+# ct -l         list running sessions (full)
+# ct -q         list running session names only
+# ct -p         list available workspaces
+# ct -k <name>  kill a session
+WS="$HOME/workspaces"
+
+# resolve tmux/claude by absolute path — non-interactive ssh has no PATH
+find_bin() {
+  for c in "$@"; do
+    [ -x "$c" ] && { echo "$c"; return; }
+    command -v "$c" >/dev/null 2>&1 && { command -v "$c"; return; }
+  done
+  echo "$1"
+}
+TMUX="$(find_bin /opt/homebrew/bin/tmux /usr/local/bin/tmux tmux)"
+CLAUDE="$(find_bin "$HOME/.local/bin/claude" /opt/homebrew/bin/claude /usr/local/bin/claude claude)"
+
+case "$1" in
+  -l|--list|ls) exec "$TMUX" ls ;;
+  -q|--quiet)   exec "$TMUX" ls -F '#{session_name}' 2>/dev/null ;;
+  -p|--projects) exec ls -1 "$WS" ;;
+  -k|--kill) [ -n "$2" ] || { echo "usage: ct -k <name>"; exit 1; }
+             exec "$TMUX" kill-session -t "$2" ;;
+esac
+
+SESSION="${1:-claude}"
+PROJECT="$WS/$SESSION"
+[ -d "$PROJECT" ] && cd "$PROJECT"
+exec "$TMUX" new-session -A -s "$SESSION" \
+  "$CLAUDE" --dangerously-skip-permissions
